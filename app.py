@@ -2,9 +2,9 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from azure_agent import chat
 
-from agent import chat
-
+app = FastAPI()
 
 app = FastAPI(
     title="Azure Resource Creator"
