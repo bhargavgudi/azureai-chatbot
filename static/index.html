@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Siemens Azure Resource Assistant
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+
+</head>
+
+
+<body>
+
+
+<div class="app">
+
+
+    <div class="header">
+
+        <div>
+
+            <h1>
+                Siemens Azure Resource Assistant
+            </h1>
+
+            <p>
+                Azure VM & Jira Automation
+            </p>
+
+        </div>
+
+    </div>
+
+
+    <div
+        id="chat"
+        class="chat"
+    >
+
+        <div class="message assistant">
+
+            <div class="avatar">
+                AI
+            </div>
+
+            <div class="bubble">
+
+                Hello! 👋
+                <br><br>
+                I can help you create Azure
+                Resource Groups and Virtual Machines,
+                and create Jira tickets.
+                <br><br>
+                What would you like to do?
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <div class="input-area">
+
+        <textarea
+            id="message"
+            placeholder="Type your request..."
+            rows="2"
+        ></textarea>
+
+
+        <button
+            onclick="sendMessage()"
+            id="sendButton"
+        >
+
+            Send
+
+        </button>
+
+    </div>
+
+
+</div>
+
+
+<script src="/static/app.js"></script>
+
+
+</body>
+
+</html>
