@@ -4,31 +4,22 @@ import base64
 import requests
 from typing import Any, Dict
 
-
-# ============================================================
-# AZURE IMPORTS
-# ============================================================
-
-from azure.identity import DefaultAzureCredential
+from azure.identity import (
+    DefaultAzureCredential,
+    ManagedIdentityCredential,
+)
 
 from azure.ai.projects import AIProjectClient
-
 from azure.ai.projects.models import (
     PromptAgentDefinition,
     FunctionTool,
 )
 
-# IMPORTANT:
-# ResourceManagementClient must be imported from the
-# .resources module with the current azure-mgmt-resource package.
 from azure.mgmt.resource.resources import ResourceManagementClient
-
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.network.models import (
     NetworkInterface,
     NetworkInterfaceIPConfiguration,
-    Subnet,
-    PublicIPAddress,
 )
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.compute.models import (
@@ -43,7 +34,6 @@ from azure.mgmt.compute.models import (
     NetworkInterfaceReference,
     VirtualMachine,
 )
-
 
 from azure.core.exceptions import HttpResponseError
 
@@ -69,7 +59,7 @@ DEPLOYMENT_NAME = os.getenv(
 
 SUBSCRIPTION_ID = os.getenv(
     "AZURE_SUBSCRIPTION_ID",
-    "5f3e512d-9103-4839-b2dc-7efa238f2383",
+    "",
 )
 
 
@@ -99,20 +89,33 @@ JIRA_PROJECT_KEY = os.getenv(
 
 
 # ============================================================
+# VALIDATE AZURE CONFIG
+# ============================================================
+
+if not SUBSCRIPTION_ID:
+    print(
+        "[WARNING] AZURE_SUBSCRIPTION_ID is not configured."
+    )
+
+
+# ============================================================
 # AUTHENTICATION
 # ============================================================
 
-#credential = DefaultAzureCredential()
-
-from azure.identity import (
-    DefaultAzureCredential,
-    ManagedIdentityCredential,
-)
-
 if os.getenv("WEBSITE_HOSTNAME"):
+    print(
+        "[Azure] Using Managed Identity."
+    )
+
     credential = ManagedIdentityCredential()
+
 else:
+    print(
+        "[Azure] Using DefaultAzureCredential."
+    )
+
     credential = DefaultAzureCredential()
+
 
 # ============================================================
 # AZURE CLIENTS
@@ -145,10 +148,11 @@ project_client = AIProjectClient(
 
 
 # ============================================================
-# UTILITY
+# SECURITY / ERROR HANDLING
 # ============================================================
 
 def safe_error_message(error: Exception) -> str:
+
     message = str(error)
 
     if JIRA_API_TOKEN:
@@ -185,7 +189,7 @@ def jira_headers() -> Dict[str, str]:
 # JIRA CONFIGURATION CHECK
 # ============================================================
 
-def check_jira_configuration():
+def check_jira_configuration() -> Dict[str, Any]:
 
     missing = []
 
@@ -208,7 +212,11 @@ def check_jira_configuration():
 
 
 # ============================================================
-# JIRA CREATE
+# CREATE JIRA TICKET
+#
+# IMPORTANT:
+# This function is called ONLY after Azure deployment
+# succeeds.
 # ============================================================
 
 def create_jira_issue(
@@ -220,16 +228,22 @@ def create_jira_issue(
     config = check_jira_configuration()
 
     if not config["configured"]:
+
+        print(
+            "[Jira] Configuration is incomplete."
+        )
+
         return {
             "success": False,
             "error": "JiraConfigurationMissing",
             "message": (
-                "Jira is not configured. Missing: "
+                "Missing Jira configuration: "
                 + ", ".join(config["missing"])
             ),
         }
 
     if not summary:
+
         return {
             "success": False,
             "error": "MissingParameter",
@@ -248,7 +262,9 @@ def create_jira_issue(
                 "project": {
                     "key": JIRA_PROJECT_KEY,
                 },
+
                 "summary": summary,
+
                 "description": {
                     "type": "doc",
                     "version": 1,
@@ -264,13 +280,16 @@ def create_jira_issue(
                         }
                     ],
                 },
+
                 "issuetype": {
                     "name": issue_type,
                 },
             }
         }
 
-        print("[Jira] Creating issue...")
+        print(
+            "[Jira] Creating ticket after successful Azure deployment..."
+        )
 
         response = requests.post(
             url,
@@ -280,6 +299,12 @@ def create_jira_issue(
         )
 
         if response.status_code not in (200, 201):
+
+            print(
+                f"[Jira] Creation failed: "
+                f"{response.status_code}"
+            )
+
             return {
                 "success": False,
                 "error": "JiraAPIError",
@@ -291,6 +316,10 @@ def create_jira_issue(
 
         issue_key = data.get("key")
         issue_id = data.get("id")
+
+        print(
+            f"[Jira] Created issue: {issue_key}"
+        )
 
         return {
             "success": True,
@@ -306,99 +335,13 @@ def create_jira_issue(
 
     except Exception as e:
 
-        return {
-            "success": False,
-            "error": type(e).__name__,
-            "message": safe_error_message(e),
-        }
-
-
-# ============================================================
-# JIRA UPDATE
-# ============================================================
-
-def update_jira_issue(
-    issue_key: str,
-    description: str,
-) -> Dict[str, Any]:
-
-    config = check_jira_configuration()
-
-    if not config["configured"]:
-        return {
-            "success": False,
-            "error": "JiraConfigurationMissing",
-            "message": (
-                "Jira is not configured. Missing: "
-                + ", ".join(config["missing"])
-            ),
-        }
-
-    if not issue_key:
-        return {
-            "success": False,
-            "error": "MissingParameter",
-            "message": "Jira issue key is required.",
-        }
-
-    try:
-
-        url = (
-            f"{JIRA_BASE_URL}"
-            f"/rest/api/3/issue/{issue_key}"
+        print(
+            "[Jira] Exception while creating ticket:"
         )
-
-        payload = {
-            "fields": {
-                "description": {
-                    "type": "doc",
-                    "version": 1,
-                    "content": [
-                        {
-                            "type": "paragraph",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": description,
-                                }
-                            ],
-                        }
-                    ],
-                }
-            }
-        }
 
         print(
-            f"[Jira] Updating {issue_key}..."
+            safe_error_message(e)
         )
-
-        response = requests.put(
-            url,
-            headers=jira_headers(),
-            json=payload,
-            timeout=30,
-        )
-
-        if response.status_code not in (200, 204):
-            return {
-                "success": False,
-                "error": "JiraAPIError",
-                "status_code": response.status_code,
-                "message": response.text,
-            }
-
-        return {
-            "success": True,
-            "issue_key": issue_key,
-            "issue_url": (
-                f"{JIRA_BASE_URL}/browse/{issue_key}"
-            ),
-            "message": (
-                f"Jira issue {issue_key} updated."
-            ),
-        }
-
-    except Exception as e:
 
         return {
             "success": False,
@@ -408,7 +351,19 @@ def update_jira_issue(
 
 
 # ============================================================
-# RESOURCE GROUP
+# RESOURCE GROUP CREATION
+#
+# Flow:
+#
+# Azure RG creation
+#       ↓
+# Success?
+#       ↓
+# YES → Create ONE Jira ticket
+#
+# Failure?
+#       ↓
+# NO Jira ticket
 # ============================================================
 
 def create_resource_group(
@@ -417,20 +372,31 @@ def create_resource_group(
 ) -> Dict[str, Any]:
 
     if not resource_group_name:
+
         return {
             "success": False,
             "error": "MissingParameter",
-            "message": "Resource group name is required.",
+            "message": (
+                "Resource group name is required."
+            ),
         }
 
     if not location:
+
         return {
             "success": False,
             "error": "MissingParameter",
-            "message": "Location is required.",
+            "message": (
+                "Location is required."
+            ),
         }
 
     try:
+
+        print(
+            f"[Azure] Creating resource group "
+            f"'{resource_group_name}'..."
+        )
 
         result = (
             resource_client
@@ -443,36 +409,146 @@ def create_resource_group(
             )
         )
 
+        print(
+            f"[Azure] Resource group created: "
+            f"{result.name}"
+        )
+
+        # ====================================================
+        # AZURE SUCCESS
+        #
+        # NOW create exactly ONE Jira ticket.
+        # ====================================================
+
+        jira_description = f"""
+Azure Resource Group deployment completed successfully.
+
+Resource Group:
+{result.name}
+
+Location:
+{result.location}
+
+Subscription:
+{SUBSCRIPTION_ID}
+
+Status:
+DEPLOYMENT COMPLETED
+
+This Jira ticket represents the customer's
+resource group creation request.
+"""
+
+        jira_result = create_jira_issue(
+            summary=(
+                f"Azure Resource Group Created - "
+                f"{result.name}"
+            ),
+            description=jira_description,
+            issue_type="Task",
+        )
+
         return {
             "success": True,
-            "resource_group_name": result.name,
-            "location": result.location,
-            "message": (
-                f"Resource group '{result.name}' "
-                "created successfully."
-            ),
+
+            "resource_group_name":
+                result.name,
+
+            "location":
+                result.location,
+
+            "message":
+                (
+                    f"Resource group "
+                    f"'{result.name}' "
+                    "created successfully."
+                ),
+
+            "jira": {
+                "created":
+                    jira_result.get(
+                        "success",
+                        False,
+                    ),
+
+                "issue_key":
+                    jira_result.get(
+                        "issue_key"
+                    ),
+
+                "issue_url":
+                    jira_result.get(
+                        "issue_url"
+                    ),
+
+                "message":
+                    jira_result.get(
+                        "message"
+                    ),
+            },
         }
 
     except HttpResponseError as e:
+
+        error_message = safe_error_message(e)
+
+        print(
+            "[Azure] Resource group creation failed."
+        )
+
+        print(
+            error_message
+        )
+
+        # IMPORTANT:
+        # No Jira ticket is created because
+        # Azure deployment failed.
 
         return {
             "success": False,
             "error": "AzureHttpResponseError",
             "status_code": e.status_code,
-            "message": safe_error_message(e),
+            "message": error_message,
+            "jira": {
+                "created": False,
+            },
         }
 
     except Exception as e:
 
+        error_message = safe_error_message(e)
+
+        print(
+            "[Azure] Unexpected resource group error."
+        )
+
+        print(
+            error_message
+        )
+
         return {
             "success": False,
             "error": type(e).__name__,
-            "message": safe_error_message(e),
+            "message": error_message,
+            "jira": {
+                "created": False,
+            },
         }
 
 
 # ============================================================
 # VM CREATION
+#
+# One customer request may create:
+#
+# VM
+# NIC
+# Public IP
+#
+# But Jira = ONE ticket.
+#
+# Jira is created ONLY after the entire VM deployment
+# succeeds.
 # ============================================================
 
 def create_virtual_machine(
@@ -492,23 +568,42 @@ def create_virtual_machine(
     create_public_ip: bool,
 ) -> Dict[str, Any]:
 
-    # ========================================================
-    # VALIDATION
-    # ========================================================
-
     required = {
-        "resource_group_name": resource_group_name,
-        "vm_name": vm_name,
-        "location": location,
-        "vnet_name": vnet_name,
-        "subnet_name": subnet_name,
-        "vm_size": vm_size,
-        "image_publisher": image_publisher,
-        "image_offer": image_offer,
-        "image_sku": image_sku,
-        "image_version": image_version,
-        "admin_username": admin_username,
-        "admin_password": admin_password,
+        "resource_group_name":
+            resource_group_name,
+
+        "vm_name":
+            vm_name,
+
+        "location":
+            location,
+
+        "vnet_name":
+            vnet_name,
+
+        "subnet_name":
+            subnet_name,
+
+        "vm_size":
+            vm_size,
+
+        "image_publisher":
+            image_publisher,
+
+        "image_offer":
+            image_offer,
+
+        "image_sku":
+            image_sku,
+
+        "image_version":
+            image_version,
+
+        "admin_username":
+            admin_username,
+
+        "admin_password":
+            admin_password,
     }
 
     for name, value in required.items():
@@ -517,6 +612,7 @@ def create_virtual_machine(
             isinstance(value, str)
             and not value.strip()
         ):
+
             return {
                 "success": False,
                 "error": "MissingParameter",
@@ -526,66 +622,12 @@ def create_virtual_machine(
                 ),
             }
 
-    # ========================================================
-    # STEP 1 - CREATE JIRA FIRST
-    # ========================================================
-
-    jira_issue = create_jira_issue(
-        summary=(
-            f"Azure VM Deployment - {vm_name}"
-        ),
-        description=f"""
-Azure VM deployment requested.
-
-VM Name: {vm_name}
-Resource Group: {resource_group_name}
-Location: {location}
-Zone: {zone or "Not specified"}
-
-VNet: {vnet_name}
-Subnet: {subnet_name}
-VM Size: {vm_size}
-
-Image:
-Publisher: {image_publisher}
-Offer: {image_offer}
-SKU: {image_sku}
-Version: {image_version}
-
-Public IP requested: {create_public_ip}
-
-Status: DEPLOYMENT STARTED
-
-The administrator password is intentionally
-not stored in Jira.
-""",
-        issue_type="Task",
-    )
-
-    if jira_issue["success"]:
-
-        print(
-            f"[Jira] Created "
-            f"{jira_issue['issue_key']}"
-        )
-
-    else:
-
-        print(
-            "[Jira] Could not create ticket:"
-        )
-
-        print(jira_issue)
-
-    # ========================================================
-    # STEP 2 - AZURE DEPLOYMENT
-    # ========================================================
-
     try:
 
-        # ----------------------------------------------------
+        # ====================================================
+        # STEP 1
         # RESOURCE GROUP
-        # ----------------------------------------------------
+        # ====================================================
 
         print(
             "[Azure] Checking resource group..."
@@ -595,26 +637,24 @@ not stored in Jira.
             resource_group_name
         )
 
-        # ----------------------------------------------------
+        # ====================================================
+        # STEP 2
         # VNET
-        # ----------------------------------------------------
+        # ====================================================
 
         print(
             "[Azure] Checking VNet..."
         )
 
-        vnet = (
-            network_client
-            .virtual_networks
-            .get(
-                resource_group_name,
-                vnet_name,
-            )
+        network_client.virtual_networks.get(
+            resource_group_name,
+            vnet_name,
         )
 
-        # ----------------------------------------------------
+        # ====================================================
+        # STEP 3
         # SUBNET
-        # ----------------------------------------------------
+        # ====================================================
 
         print(
             "[Azure] Checking subnet..."
@@ -631,10 +671,11 @@ not stored in Jira.
         )
 
         print(
-            f"[Azure] Subnet ID: {subnet.id}"
+            f"[Azure] Subnet: {subnet.id}"
         )
 
         # ====================================================
+        # STEP 4
         # PUBLIC IP
         # ====================================================
 
@@ -648,14 +689,20 @@ not stored in Jira.
 
             public_ip_parameters = {
                 "location": location,
+
                 "sku": {
                     "name": "Standard",
                 },
-                "public_ip_allocation_method": "Static",
-                "public_ip_address_version": "IPv4",
+
+                "public_ip_allocation_method":
+                    "Static",
+
+                "public_ip_address_version":
+                    "IPv4",
             }
 
             if zone:
+
                 public_ip_parameters["zones"] = [
                     str(zone)
                 ]
@@ -676,72 +723,51 @@ not stored in Jira.
             )
 
             print(
-                f"[Azure] Public IP: "
+                f"[Azure] Public IP created: "
                 f"{public_ip.ip_address}"
             )
 
         # ====================================================
+        # STEP 5
         # NIC
         # ====================================================
 
-                # ----------------------------------------------------
-        # NIC
-        # ----------------------------------------------------
+        print(
+            "[Azure] Creating NIC..."
+        )
 
-        print("\n[5/6] Creating NIC...")
+        nic_name = (
+            f"{vm_name}-nic"
+        )
 
-        nic_name = f"{vm_name}-nic"
+        ip_configuration = (
+            NetworkInterfaceIPConfiguration(
+                name=f"{vm_name}-ipconfig",
 
-        # IMPORTANT:
-        # ip_configurations belongs to the NIC resource.
-        # It does NOT belong to the VM network_profile.
+                private_ip_allocation_method=
+                    "Dynamic",
 
-        ip_configuration = NetworkInterfaceIPConfiguration(
-            name=f"{vm_name}-ipconfig",
-            private_ip_allocation_method="Dynamic",
-            private_ip_address_version="IPv4",
-            subnet={
-                "id": subnet.id,
-            },
+                private_ip_address_version=
+                    "IPv4",
+
+                subnet={
+                    "id": subnet.id,
+                },
+            )
         )
 
         if public_ip:
+
             ip_configuration.public_ip_address = {
                 "id": public_ip.id,
             }
 
         nic_parameters = NetworkInterface(
             location=location,
+
             ip_configurations=[
                 ip_configuration
             ],
-        )
-
-        print("\nNIC request:")
-        print(
-            json.dumps(
-                {
-                    "location": location,
-                    "ip_configurations": [
-                        {
-                            "name": f"{vm_name}-ipconfig",
-                            "private_ip_allocation_method": "Dynamic",
-                            "private_ip_address_version": "IPv4",
-                            "subnet": {
-                                "id": subnet.id
-                            },
-                            "public_ip_address": (
-                                {
-                                    "id": public_ip.id
-                                }
-                                if public_ip
-                                else None
-                            ),
-                        }
-                    ],
-                },
-                indent=2,
-            )
         )
 
         nic = (
@@ -759,22 +785,20 @@ not stored in Jira.
             f"[Azure] NIC created: {nic.name}"
         )
 
-        print(
-            f"[Azure] NIC ID: {nic.id}"
-        )
-
-            # ====================================================
-            # IMAGE
-            # ====================================================
+        # ====================================================
+        # STEP 6
+        # IMAGE
+        # ====================================================
 
         image_reference = ImageReference(
-                publisher=image_publisher,
-                offer=image_offer,
-                sku=image_sku,
-                version=image_version,
-            )
+            publisher=image_publisher,
+            offer=image_offer,
+            sku=image_sku,
+            version=image_version,
+        )
 
         # ====================================================
+        # STEP 7
         # OS DISK
         # ====================================================
 
@@ -789,17 +813,14 @@ not stored in Jira.
             caching="ReadWrite",
         )
 
-        # ====================================================
-        # STORAGE PROFILE
-        # ====================================================
-
         storage_profile = StorageProfile(
             image_reference=image_reference,
             os_disk=os_disk,
         )
 
         # ====================================================
-        # HARDWARE PROFILE
+        # STEP 8
+        # HARDWARE
         # ====================================================
 
         hardware_profile = HardwareProfile(
@@ -807,6 +828,7 @@ not stored in Jira.
         )
 
         # ====================================================
+        # STEP 9
         # OS PROFILE
         # ====================================================
 
@@ -822,14 +844,9 @@ not stored in Jira.
         )
 
         # ====================================================
-        # VM NETWORK PROFILE
+        # STEP 10
+        # NETWORK PROFILE
         # ====================================================
-
-        # CRITICAL:
-        #
-        # There is NO ip_configurations here.
-        #
-        # The VM only references the NIC.
 
         network_interface_reference = (
             NetworkInterfaceReference(
@@ -845,55 +862,31 @@ not stored in Jira.
         )
 
         # ====================================================
-        # VM MODEL
+        # STEP 11
+        # VM
         # ====================================================
 
         vm_parameters = VirtualMachine(
             location=location,
-            hardware_profile=hardware_profile,
-            storage_profile=storage_profile,
-            os_profile=os_profile,
-            network_profile=network_profile,
+
+            hardware_profile=
+                hardware_profile,
+
+            storage_profile=
+                storage_profile,
+
+            os_profile=
+                os_profile,
+
+            network_profile=
+                network_profile,
         )
 
-        # ====================================================
-        # AVAILABILITY ZONE
-        # ====================================================
-
         if zone:
+
             vm_parameters.zones = [
                 str(zone)
             ]
-
-        # ====================================================
-        # SAFE DEBUG
-        # ====================================================
-
-        print(
-            "\n[Azure] VM configuration:"
-        )
-
-        print(
-            json.dumps(
-                {
-                    "location": location,
-                    "vm_size": vm_size,
-                    "image": {
-                        "publisher": image_publisher,
-                        "offer": image_offer,
-                        "sku": image_sku,
-                        "version": image_version,
-                    },
-                    "nic_id": nic.id,
-                    "zone": zone or None,
-                },
-                indent=2,
-            )
-        )
-
-        # ====================================================
-        # CREATE VM
-        # ====================================================
 
         print(
             "[Azure] Starting VM deployment..."
@@ -915,14 +908,14 @@ not stored in Jira.
         )
 
         # ====================================================
-        # GET FINAL PUBLIC IP
+        # STEP 12
+        # GET PUBLIC IP
         # ====================================================
 
         public_ip_address = None
 
         if public_ip:
 
-            # Re-read from Azure after VM deployment.
             final_public_ip = (
                 network_client
                 .public_ip_addresses
@@ -937,13 +930,20 @@ not stored in Jira.
             )
 
         # ====================================================
-        # JIRA SUCCESS UPDATE
+        # ENTIRE AZURE REQUEST SUCCEEDED
+        #
+        # NOW CREATE ONE JIRA TICKET.
         # ====================================================
 
-        success_description = f"""
+        jira_description = f"""
 Azure VM deployment completed successfully.
 
-VM Name: {vm.name}
+This ticket represents ONE customer request.
+
+Resources created as part of this request:
+
+VM:
+{vm.name}
 
 Resource Group:
 {resource_group_name}
@@ -972,26 +972,27 @@ NIC ID:
 Public IP:
 {public_ip_address or "Not assigned"}
 
-Image:
+OS Image:
 Publisher: {image_publisher}
 Offer: {image_offer}
 SKU: {image_sku}
 Version: {image_version}
 
-Status:
-DEPLOYMENT COMPLETED
+Deployment Status:
+SUCCESS
 
-The VM administrator password is not stored in Jira.
+The administrator password is intentionally
+not stored in Jira.
 """
 
-        jira_update = None
-
-        if jira_issue.get("success"):
-
-            jira_update = update_jira_issue(
-                issue_key=jira_issue["issue_key"],
-                description=success_description,
-            )
+        jira_result = create_jira_issue(
+            summary=(
+                f"Azure VM Deployment Completed - "
+                f"{vm.name}"
+            ),
+            description=jira_description,
+            issue_type="Task",
+        )
 
         # ====================================================
         # SUCCESS RESPONSE
@@ -1000,7 +1001,8 @@ The VM administrator password is not stored in Jira.
         return {
             "success": True,
 
-            "vm_name": vm.name,
+            "vm_name":
+                vm.name,
 
             "resource_group":
                 resource_group_name,
@@ -1032,59 +1034,53 @@ The VM administrator password is not stored in Jira.
             "image": {
                 "publisher":
                     image_publisher,
+
                 "offer":
                     image_offer,
+
                 "sku":
                     image_sku,
+
                 "version":
                     image_version,
             },
 
             "jira": {
                 "created":
-                    jira_issue.get(
+                    jira_result.get(
                         "success",
                         False,
                     ),
 
                 "issue_key":
-                    jira_issue.get(
+                    jira_result.get(
                         "issue_key"
                     ),
 
                 "issue_url":
-                    jira_issue.get(
+                    jira_result.get(
                         "issue_url"
                     ),
 
-                "updated":
-                    (
-                        jira_update.get(
-                            "success",
-                            False,
-                        )
-                        if jira_update
-                        else False
+                "message":
+                    jira_result.get(
+                        "message"
                     ),
             },
 
-            "message":
-                (
-                    f"VM '{vm.name}' "
-                    "was created successfully."
-                ),
+            "message": (
+                f"VM '{vm.name}' "
+                "and all requested resources "
+                "were created successfully."
+            ),
         }
-
-    # ========================================================
-    # AZURE HTTP ERROR
-    # ========================================================
 
     except HttpResponseError as e:
 
         error_message = safe_error_message(e)
 
         print(
-            "\n[Azure] VM deployment failed."
+            "[Azure] VM deployment failed."
         )
 
         print(
@@ -1092,53 +1088,14 @@ The VM administrator password is not stored in Jira.
         )
 
         print(
-            f"Error: {error_message}"
+            error_message
         )
 
-        failure_description = f"""
-Azure VM deployment FAILED.
-
-VM Name:
-{vm_name}
-
-Resource Group:
-{resource_group_name}
-
-Location:
-{location}
-
-Zone:
-{zone or "Not specified"}
-
-VNet:
-{vnet_name}
-
-Subnet:
-{subnet_name}
-
-VM Size:
-{vm_size}
-
-Azure Status Code:
-{e.status_code}
-
-Azure Error:
-{error_message}
-
-Status:
-DEPLOYMENT FAILED
-
-The VM was not confirmed as successfully created.
-"""
-
-        jira_update = None
-
-        if jira_issue.get("success"):
-
-            jira_update = update_jira_issue(
-                issue_key=jira_issue["issue_key"],
-                description=failure_description,
-            )
+        # IMPORTANT:
+        #
+        # NO Jira ticket is created because
+        # the complete customer request did not
+        # successfully finish.
 
         return {
             "success": False,
@@ -1153,44 +1110,16 @@ The VM was not confirmed as successfully created.
                 error_message,
 
             "jira": {
-                "created":
-                    jira_issue.get(
-                        "success",
-                        False,
-                    ),
-
-                "issue_key":
-                    jira_issue.get(
-                        "issue_key"
-                    ),
-
-                "issue_url":
-                    jira_issue.get(
-                        "issue_url"
-                    ),
-
-                "updated":
-                    (
-                        jira_update.get(
-                            "success",
-                            False,
-                        )
-                        if jira_update
-                        else False
-                    ),
+                "created": False,
             },
         }
-
-    # ========================================================
-    # GENERAL ERROR
-    # ========================================================
 
     except Exception as e:
 
         error_message = safe_error_message(e)
 
         print(
-            "\n[Azure] Unexpected VM error."
+            "[Azure] Unexpected VM error."
         )
 
         print(
@@ -1198,53 +1127,10 @@ The VM was not confirmed as successfully created.
         )
 
         print(
-            f"Error: {error_message}"
+            error_message
         )
 
-        failure_description = f"""
-Azure VM deployment FAILED.
-
-VM Name:
-{vm_name}
-
-Resource Group:
-{resource_group_name}
-
-Location:
-{location}
-
-Zone:
-{zone or "Not specified"}
-
-VNet:
-{vnet_name}
-
-Subnet:
-{subnet_name}
-
-VM Size:
-{vm_size}
-
-Error Type:
-{type(e).__name__}
-
-Error:
-{error_message}
-
-Status:
-DEPLOYMENT FAILED
-
-The VM was not confirmed as successfully created.
-"""
-
-        jira_update = None
-
-        if jira_issue.get("success"):
-
-            jira_update = update_jira_issue(
-                issue_key=jira_issue["issue_key"],
-                description=failure_description,
-            )
+        # NO Jira ticket on failed deployment.
 
         return {
             "success": False,
@@ -1256,31 +1142,7 @@ The VM was not confirmed as successfully created.
                 error_message,
 
             "jira": {
-                "created":
-                    jira_issue.get(
-                        "success",
-                        False,
-                    ),
-
-                "issue_key":
-                    jira_issue.get(
-                        "issue_key"
-                    ),
-
-                "issue_url":
-                    jira_issue.get(
-                        "issue_url"
-                    ),
-
-                "updated":
-                    (
-                        jira_update.get(
-                            "success",
-                            False,
-                        )
-                        if jira_update
-                        else False
-                    ),
+                "created": False,
             },
         }
 
@@ -1290,14 +1152,19 @@ The VM was not confirmed as successfully created.
 # ============================================================
 
 resource_group_tool = FunctionTool(
-
     name="create_resource_group",
 
     description="""
 Create an Azure Resource Group.
 
-Use only when the user explicitly asks to create
-a resource group.
+Use only when the customer explicitly asks
+to create a Resource Group.
+
+The function creates exactly ONE Jira ticket
+after the Azure Resource Group is successfully
+created.
+
+If Azure creation fails, no Jira ticket is created.
 
 Required:
 - resource_group_name
@@ -1308,7 +1175,6 @@ Required:
         "type": "object",
 
         "properties": {
-
             "resource_group_name": {
                 "type": "string",
             },
@@ -1335,7 +1201,6 @@ Required:
 # ============================================================
 
 vm_tool = FunctionTool(
-
     name="create_virtual_machine",
 
     description="""
@@ -1344,6 +1209,20 @@ Create an Azure Linux Virtual Machine.
 The Resource Group must already exist.
 
 The VNet and subnet must already exist.
+
+A single VM request may create:
+- VM
+- NIC
+- Public IP
+
+These are ONE customer request and therefore
+must result in exactly ONE Jira ticket.
+
+The Jira ticket is created ONLY after the
+entire Azure deployment succeeds.
+
+If any Azure deployment step fails, no Jira
+ticket is created.
 
 Required:
 - resource group
@@ -1361,23 +1240,16 @@ Required:
 Do not invent missing values.
 
 If required information is missing,
-ask the user.
+ask the customer.
 
-The application automatically:
-1. Creates a Jira ticket.
-2. Deploys the Azure VM.
-3. Updates Jira after successful deployment.
-4. Updates Jira if deployment fails.
-
-Do NOT create a separate Jira ticket for the VM.
+Never create a separate Jira ticket for
+the VM, NIC, or Public IP.
 """,
 
     parameters={
-
         "type": "object",
 
         "properties": {
-
             "resource_group_name": {
                 "type": "string",
             },
@@ -1464,25 +1336,26 @@ Do NOT create a separate Jira ticket for the VM.
 # ============================================================
 
 jira_tool = FunctionTool(
-
     name="create_jira_issue",
 
     description="""
 Create a Jira issue manually.
 
-Use this only for Jira issues unrelated to Azure VM
-deployment.
+Use this ONLY when the customer explicitly
+asks for a standalone Jira issue.
 
-For VM deployment, create_virtual_machine automatically
-handles Jira creation and updates.
+Do NOT use this tool for Azure resource
+deployment requests.
+
+Azure deployment functions automatically
+create their own Jira ticket after successful
+deployment.
 """,
 
     parameters={
-
         "type": "object",
 
         "properties": {
-
             "summary": {
                 "type": "string",
             },
@@ -1518,7 +1391,6 @@ print(
 )
 
 agent = project_client.agents.create_version(
-
     agent_name=AGENT_NAME,
 
     definition=PromptAgentDefinition(
@@ -1526,28 +1398,36 @@ agent = project_client.agents.create_version(
         model=DEPLOYMENT_NAME,
 
         instructions="""
-
 You are an Azure infrastructure and Jira assistant.
 
 You can perform:
 
 1. Azure Resource Group creation.
 2. Azure Linux VM creation.
-3. Jira issue creation.
+3. Standalone Jira issue creation.
 
 
 RESOURCE GROUP
----------------
+==============
 
-Create a Resource Group only when explicitly requested.
+Create a Resource Group only when the customer
+explicitly asks for one.
 
-Do not invent missing values.
+Never invent missing values.
+
+The Resource Group function automatically
+creates ONE Jira ticket after successful Azure
+creation.
+
+Do not call create_jira_issue separately after
+a Resource Group deployment.
 
 
 VM DEPLOYMENT
--------------
+=============
 
-Create a VM only when explicitly requested.
+Create a VM only when the customer explicitly
+requests it.
 
 Collect:
 
@@ -1565,11 +1445,11 @@ Collect:
 
 Never invent missing values.
 
-Ask for missing information.
+Ask the customer for missing information.
 
 
 SUPPORTED IMAGES
-----------------
+================
 
 Ubuntu 24.04 LTS:
 
@@ -1601,23 +1481,110 @@ version:
 latest
 
 
-JIRA VM WORKFLOW
-----------------
+JIRA TICKET RULE
+================
 
-When create_virtual_machine is called:
+IMPORTANT:
 
-1. Create Jira ticket.
-2. Start Azure VM deployment.
-3. If VM succeeds, update Jira with VM details.
-4. If VM fails, update Jira with the failure.
+Jira tickets represent CUSTOMER REQUESTS,
+not individual Azure resources.
 
-Do not separately create Jira for VM deployment.
+Example:
 
-Never store the VM admin password in Jira.
+Customer asks:
+
+"Create a VM with a NIC and Public IP."
+
+Azure may create:
+
+1. VM
+2. NIC
+3. Public IP
+
+This is ONE customer request.
+
+Therefore create EXACTLY ONE Jira ticket.
+
+Never create:
+
+- one VM Jira ticket
+- one NIC Jira ticket
+- one Public IP Jira ticket
+
+Instead create ONE Jira ticket containing
+all resources created for that request.
+
+
+SUCCESS RULE
+============
+
+Create the Jira ticket ONLY after the Azure
+operation requested by the customer succeeds.
+
+If Azure deployment fails:
+
+- do NOT create a Jira ticket
+- report the Azure failure
+- do not claim successful deployment
+
+
+RESOURCE GROUP RULE
+===================
+
+Customer asks to create Resource Group.
+
+If successful:
+
+1. Azure creates Resource Group.
+2. Function creates ONE Jira ticket.
+3. Return Jira ticket information.
+
+If unsuccessful:
+
+1. Azure creation fails.
+2. No Jira ticket.
+3. Report failure.
+
+
+VM RULE
+=======
+
+Customer asks to create VM.
+
+The VM function may create:
+
+- Public IP
+- NIC
+- VM
+
+All are part of ONE request.
+
+If the complete VM deployment succeeds:
+
+1. Create ONE Jira ticket.
+2. Include VM, NIC, Public IP and configuration
+   details in that ticket.
+3. Return Jira ticket information.
+
+If deployment fails:
+
+1. Do not create Jira ticket.
+2. Report failure.
+
+
+STANDALONE JIRA
+===============
+
+The create_jira_issue function is only for
+standalone Jira requests that are unrelated
+to Azure deployment.
+
+Do not call it after Azure functions because
+the Azure functions already handle Jira.
 
 
 SECURITY
---------
+========
 
 Never expose:
 
@@ -1625,11 +1592,13 @@ Never expose:
 - Azure credentials
 - VM admin password
 
-Never claim a VM was created unless the function
-returns success.
+Never write the VM admin password into Jira.
 
-Never claim a Jira issue was created unless the
-function returns success.
+Never claim an Azure resource was created unless
+the corresponding function returns success.
+
+Never claim a Jira ticket was created unless
+the function returns Jira success.
 """,
 
         tools=[
@@ -1685,6 +1654,7 @@ def execute_function(
                 resource_group_name=arguments[
                     "resource_group_name"
                 ],
+
                 location=arguments[
                     "location"
                 ],
@@ -1696,42 +1666,55 @@ def execute_function(
                 resource_group_name=arguments[
                     "resource_group_name"
                 ],
+
                 vm_name=arguments[
                     "vm_name"
                 ],
+
                 location=arguments[
                     "location"
                 ],
+
                 zone=arguments[
                     "zone"
                 ],
+
                 vnet_name=arguments[
                     "vnet_name"
                 ],
+
                 subnet_name=arguments[
                     "subnet_name"
                 ],
+
                 vm_size=arguments[
                     "vm_size"
                 ],
+
                 image_publisher=arguments[
                     "image_publisher"
                 ],
+
                 image_offer=arguments[
                     "image_offer"
                 ],
+
                 image_sku=arguments[
                     "image_sku"
                 ],
+
                 image_version=arguments[
                     "image_version"
                 ],
+
                 admin_username=arguments[
                     "admin_username"
                 ],
+
                 admin_password=arguments[
                     "admin_password"
                 ],
+
                 create_public_ip=arguments[
                     "create_public_ip"
                 ],
@@ -1743,9 +1726,11 @@ def execute_function(
                 summary=arguments[
                     "summary"
                 ],
+
                 description=arguments[
                     "description"
                 ],
+
                 issue_type=arguments[
                     "issue_type"
                 ],
@@ -1755,7 +1740,8 @@ def execute_function(
             "success": False,
             "error": "UnknownFunction",
             "message": (
-                f"Unknown function: {function_name}"
+                f"Unknown function: "
+                f"{function_name}"
             ),
         }
 
@@ -1783,7 +1769,9 @@ def chat(
             .responses
             .create(
                 conversation=conversation.id,
+
                 input=user_prompt,
+
                 extra_body={
                     "agent_reference": {
                         "name": agent.name,
@@ -1805,6 +1793,7 @@ def chat(
         ]
 
         if not function_calls:
+
             return response.output_text
 
         tool_outputs = []
@@ -1823,7 +1812,8 @@ def chat(
                     "success": False,
                     "error":
                         "InvalidFunctionArguments",
-                    "message": str(e),
+                    "message":
+                        str(e),
                 }
 
             else:
@@ -1833,6 +1823,7 @@ def chat(
                 )
 
                 if "admin_password" in safe_arguments:
+
                     safe_arguments[
                         "admin_password"
                     ] = "********"
@@ -1882,7 +1873,9 @@ def chat(
             .responses
             .create(
                 conversation=conversation.id,
+
                 input=tool_outputs,
+
                 extra_body={
                     "agent_reference": {
                         "name": agent.name,
@@ -1897,15 +1890,17 @@ def chat(
 
     except Exception as e:
 
+        error_message = safe_error_message(e)
+
         print(
             "\nCHAT ERROR:"
         )
 
         print(
-            safe_error_message(e)
+            error_message
         )
 
         return (
             "The request could not be completed. "
-            f"Error: {safe_error_message(e)}"
+            f"Error: {error_message}"
         )
