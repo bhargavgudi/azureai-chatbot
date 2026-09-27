@@ -16,7 +16,8 @@ from azure.ai.projects.models import (
     FunctionTool,
 )
 
-from azure.mgmt.resource import ResourceManagementClient
+#from azure.mgmt.resource import ResourceManagementClient
+from azure.mgmt.resource.resources import ResourceManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.network.models import (
     NetworkInterface,
