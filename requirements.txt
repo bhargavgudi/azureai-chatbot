@@ -1,5 +1,4 @@
 fastapi
-uvicorn
 requests
 azure-identity
 azure-ai-projects
@@ -8,3 +7,5 @@ azure-mgmt-network
 azure-mgmt-compute
 gunicorn
 uvicorn[standard]
+uvicorn
+
