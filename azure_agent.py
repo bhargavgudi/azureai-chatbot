@@ -102,8 +102,17 @@ JIRA_PROJECT_KEY = os.getenv(
 # AUTHENTICATION
 # ============================================================
 
-credential = DefaultAzureCredential()
+#credential = DefaultAzureCredential()
 
+from azure.identity import (
+    DefaultAzureCredential,
+    ManagedIdentityCredential,
+)
+
+if os.getenv("WEBSITE_HOSTNAME"):
+    credential = ManagedIdentityCredential()
+else:
+    credential = DefaultAzureCredential()
 
 # ============================================================
 # AZURE CLIENTS
