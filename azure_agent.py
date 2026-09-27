@@ -391,10 +391,7 @@ def create_jira_issue(
     config = check_jira_configuration()
 
     if not config["configured"]:
-
-        print(
-            "[Jira] Configuration is incomplete."
-        )
+        print("[Jira] Configuration is incomplete.")
 
         return {
             "success": False,
@@ -406,7 +403,6 @@ def create_jira_issue(
         }
 
     if not summary:
-
         return {
             "success": False,
             "error": "MissingParameter",
@@ -414,17 +410,40 @@ def create_jira_issue(
         }
 
     try:
+        # Read configuration directly from environment at runtime.
+        jira_base_url = os.getenv(
+            "JIRA_BASE_URL",
+            ""
+        ).strip().rstrip("/")
+
+        jira_project_key = os.getenv(
+            "JIRA_PROJECT_KEY",
+            ""
+        ).strip()
+
+        if not jira_base_url or not jira_project_key:
+            return {
+                "success": False,
+                "error": "JiraConfigurationMissing",
+                "message": (
+                    "JIRA_BASE_URL or JIRA_PROJECT_KEY "
+                    "is missing."
+                ),
+            }
 
         url = (
-            f"{JIRA_BASE_URL}"
+            f"{jira_base_url}"
             "/rest/api/3/issue"
         )
 
+        # KAN project was verified from Azure App Service:
+        # Task issue type ID = 10003
+        issue_type_id = "10003"
+
         payload = {
             "fields": {
-
                 "project": {
-                    "key": JIRA_PROJECT_KEY,
+                    "key": jira_project_key,
                 },
 
                 "summary": summary,
@@ -438,7 +457,7 @@ def create_jira_issue(
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": description,
+                                    "text": description or "",
                                 }
                             ],
                         }
@@ -446,14 +465,26 @@ def create_jira_issue(
                 },
 
                 "issuetype": {
-                    "name": issue_type,
+                    "id": issue_type_id,
                 },
             }
         }
 
         print(
-            "\n[Jira] Creating ONE ticket for "
-            "the completed customer request..."
+            "\n[Jira] Creating ONE ticket "
+            "for the completed customer request..."
+        )
+
+        print(
+            f"[Jira] URL: {url}"
+        )
+
+        print(
+            f"[Jira] Project: {jira_project_key}"
+        )
+
+        print(
+            f"[Jira] Issue type: {issue_type_id}"
         )
 
         response = requests.post(
@@ -463,18 +494,17 @@ def create_jira_issue(
             timeout=30,
         )
 
+        print(
+            f"[Jira] HTTP status: "
+            f"{response.status_code}"
+        )
+
         if response.status_code not in (
             200,
             201,
         ):
-
             print(
                 "[Jira] Creation failed."
-            )
-
-            print(
-                f"[Jira] HTTP status: "
-                f"{response.status_code}"
             )
 
             print(
@@ -485,10 +515,8 @@ def create_jira_issue(
             return {
                 "success": False,
                 "error": "JiraAPIError",
-                "status_code":
-                    response.status_code,
-                "message":
-                    response.text,
+                "status_code": response.status_code,
+                "message": response.text,
             }
 
         data = response.json()
@@ -503,18 +531,14 @@ def create_jira_issue(
 
         return {
             "success": True,
-
-            "issue_key":
-                issue_key,
-
-            "issue_id":
-                issue_id,
-
-            "issue_url":
-                f"{JIRA_BASE_URL}/browse/{issue_key}",
-
-            "message":
-                f"Jira issue {issue_key} created.",
+            "issue_key": issue_key,
+            "issue_id": issue_id,
+            "issue_url": (
+                f"{jira_base_url}/browse/{issue_key}"
+            ),
+            "message": (
+                f"Jira issue {issue_key} created."
+            ),
         }
 
     except Exception as e:
@@ -532,7 +556,6 @@ def create_jira_issue(
             "error": type(e).__name__,
             "message": message,
         }
-
 
 # ============================================================
 # RESOURCE GROUP CREATION
