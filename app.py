@@ -4,7 +4,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from azure_agent import chat
 
-app = FastAPI()
 
 app = FastAPI(
     title="Azure Resource Creator"
@@ -27,7 +26,6 @@ app.mount(
 # ============================================================
 
 class ChatRequest(BaseModel):
-
     message: str
 
 
@@ -37,7 +35,6 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 def home():
-
     return FileResponse(
         "static/index.html"
     )
